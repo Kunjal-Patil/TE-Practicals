@@ -7,7 +7,6 @@
 
 using namespace std;
 
-// Structure to hold macro definition details (an MNT entry)
 struct MacroDefinition {
     string name;
     int mdt_start_index;
@@ -16,12 +15,9 @@ struct MacroDefinition {
     map<string, string> default_params;
 };
 
-// --- Global Data Structures ---
 map<string, MacroDefinition> MNT;
 vector<string> MDT;
-ofstream finalOutputFile; // Global so recursive calls can write to it
 
-// Helper to split strings by a delimiter
 vector<string> split(const string& s, char delimiter) {
     vector<string> tokens;
     string token;
@@ -32,7 +28,6 @@ vector<string> split(const string& s, char delimiter) {
     return tokens;
 }
 
-// Function to load the MNT and MDT from files created by Pass-I
 void loadTables() {
     ifstream mnt_in("mnt.txt");
     string line;
@@ -42,19 +37,17 @@ void loadTables() {
         string name;
         int param_count, mdt_index;
         ss >> name >> param_count >> mdt_index;
-        MNT[name] = {name, mdt_index, param_count}; // Basic info for now
+        MNT[name] = {name, mdt_index, param_count};
     }
     mnt_in.close();
 
     ifstream mdt_in("mdt.txt");
     getline(mdt_in, line); // Skip header
     while (getline(mdt_in, line)) {
-        // The line in MDT is stored as "index\tdefinition"
         MDT.push_back(line.substr(line.find('\t') + 1));
     }
     mdt_in.close();
 
-    // Now, populate PNTAB and defaults in MNT by parsing the prototype from MDT
     for (auto& mnt_pair : MNT) {
         MacroDefinition& macro = mnt_pair.second;
         string prototype = MDT[macro.mdt_start_index];
@@ -74,13 +67,12 @@ void loadTables() {
                 string default_val = param.substr(equals_pos + 1);
                 macro.default_params[param_name] = default_val;
             }
-            macro.pntab[param_name] = i; // Positional index is simply its order
+            macro.pntab[param_name] = i;
         }
     }
 }
 
-// The core recursive expansion function
-void expandMacro(const string& macro_call_line) {
+void expandMacroAndWrite(const string& macro_call_line, ofstream& finalOutputFile) {
     stringstream ss(macro_call_line);
     vector<string> tokens;
     string token;
@@ -88,32 +80,34 @@ void expandMacro(const string& macro_call_line) {
 
     string macro_name = tokens[0];
     MacroDefinition& macro = MNT[macro_name];
-    cout << "  Expanding nested call: " << macro_name << endl;
+    cout << "  Expanding call: " << macro_name << endl;
 
-    // 1. Build ALA for this expansion
     map<int, string> ala;
      if (tokens.size() > 1) {
-        // Arguments can be complex (e.g., O,9,&E=CREG), so don't split by comma blindly
-        string all_args = macro_call_line.substr(macro_call_line.find(tokens[1]));
+        string all_args;
+        size_t first_arg_pos = macro_call_line.find(tokens[1]);
+        if (first_arg_pos != string::npos) {
+            all_args = macro_call_line.substr(first_arg_pos);
+        }
+        
         vector<string> actual_params = split(all_args, ',');
         for(size_t i = 0; i < actual_params.size(); ++i) {
             ala[i + 1] = actual_params[i];
         }
     }
 
-    // 2. Fill in defaults
     for (const auto& pair : macro.pntab) {
         if (ala.find(pair.second) == ala.end()) {
-            ala[pair.second] = macro.default_params[pair.first];
+            if (macro.default_params.count(pair.first)) {
+                ala[pair.second] = macro.default_params[pair.first];
+            }
         }
     }
 
-    // 3. Process MDT lines
     for (int i = macro.mdt_start_index + 1; ; ++i) {
         string mdt_line = MDT[i];
         if (mdt_line.find("MEND") != string::npos) break;
 
-        // Substitute parameters
         stringstream mdt_ss(mdt_line);
         vector<string> mdt_tokens;
         string mdt_token;
@@ -128,7 +122,7 @@ void expandMacro(const string& macro_call_line) {
                 arg_token.pop_back();
             }
 
-            if (arg_token[0] == '?') { // Is a positional parameter
+            if (arg_token[0] == '?') {
                 int param_index = stoi(arg_token.substr(1));
                 expanded_line += " " + ala[param_index];
             } else {
@@ -137,15 +131,7 @@ void expandMacro(const string& macro_call_line) {
             if (has_comma) expanded_line += ",";
         }
 
-        // 4. Check for further nesting
-        stringstream expanded_ss(expanded_line);
-        string first_word;
-        expanded_ss >> first_word;
-        if (MNT.count(first_word)) {
-            expandMacro(expanded_line); // Recursive call
-        } else {
-            finalOutputFile << expanded_line << endl;
-        }
+        finalOutputFile << expanded_line << endl;
     }
 }
 
@@ -155,10 +141,10 @@ int main() {
     cout << "MNT and MDT loaded successfully." << endl;
 
     ifstream inputFile("expanded_code.txt");
-    finalOutputFile.open("final_expanded_code.txt");
+    ofstream finalOutputFile("final_expanded_code.txt");
 
     if (!inputFile.is_open()) {
-        cerr << "Error: Could not open expanded_pass_one.txt" << endl;
+        cerr << "Error: Could not open expanded_code.txt" << endl;
         return 1;
     }
 
@@ -170,9 +156,8 @@ int main() {
 
         if (MNT.count(first_word)) {
             cout << "Found macro call in intermediate file: " << line << endl;
-            expandMacro(line);
+            expandMacroAndWrite(line, finalOutputFile);
         } else {
-            // It's a regular assembly line, write it directly
             finalOutputFile << line << endl;
         }
     }
@@ -180,7 +165,7 @@ int main() {
     inputFile.close();
     finalOutputFile.close();
 
-    cout << "\n✅ Pass-II of macro-processor complete." << endl;
+    cout << "\n Pass-II of macro-processor complete." << endl;
     cout << "   - Final expanded code written to final_expanded_code.txt" << endl;
 
     return 0;
