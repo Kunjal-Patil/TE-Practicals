@@ -1,0 +1,119 @@
+#include <iostream>
+#include <fstream>
+#include <sstream>
+#include <vector>
+#include <string>
+#include <cstdio>  // For sscanf
+#include <iomanip> // For setw, setfill
+#include <algorithm> // For min, etc. (though not strictly required in this version)
+#include <stdexcept> // For std::exception
+#include <cctype>  // For isdigitusing namespace 
+using namespace std;
+
+vector<pair<string, int>> SYMTAB;
+vector<pair<string, int>> LITTAB;
+
+void loadTables() {
+    ifstream sym_in("symtab.txt");
+    string symbol;
+    int address;
+    while (sym_in >> symbol >> address) {
+        SYMTAB.push_back({symbol, address});
+    }
+    sym_in.close();
+
+    ifstream lit_in("littab.txt");
+    string literal;
+    while (lit_in >> literal >> address) {
+        LITTAB.push_back({literal, address});
+    }
+    lit_in.close();
+}
+
+int resolveAddress(const string& operand) {
+    char type = ' ';
+    int index = -1;
+
+    if (sscanf(operand.c_str(), "(%c,%d)", &type, &index) == 2) {
+        if (type == 'S' && index >= 0 && index < SYMTAB.size()) {
+            return SYMTAB[index].second;
+        } else if (type == 'L' && index >= 0 && index < LITTAB.size()) {
+            return LITTAB[index].second;
+        }
+    }
+    return -1;
+}
+
+int main() {
+    loadTables();
+
+    ifstream ic_in("ic.txt");
+    ofstream mc_out("machine_code.txt");
+    cout << "⚙️  Processing Pass-II..." << endl;
+    mc_out << "--- MACHINE CODE ---\n";
+
+    string line;
+    while (getline(ic_in, line)) {
+        stringstream ss(line);
+        vector<string> tokens;
+        string token;
+        while (ss >> token) tokens.push_back(token);
+        if (tokens.empty()) continue;
+
+        int token_idx = 0;
+        int lc = -1;
+
+        if (!tokens.empty() && isdigit(tokens[0][0])) {
+            try {
+                lc = stoi(tokens[0]);
+                token_idx = 1;
+            } catch (const std::exception& e) {
+                token_idx = 0;
+            }
+        }
+
+        if (token_idx >= tokens.size()) continue;
+
+        string ic_class = tokens[token_idx++];
+        
+        int opcode, reg, dl_code;
+        
+        if (sscanf(ic_class.c_str(), "(IS,%d)", &opcode) == 1) {
+            reg = 0;
+            int addr = 0;
+
+            if (token_idx < tokens.size()) {
+                sscanf(tokens[token_idx++].c_str(), "(%d)", &reg);
+            }
+            if (token_idx < tokens.size()) {
+                addr = resolveAddress(tokens[token_idx++]);
+            }
+            
+            mc_out << lc << "\t "
+                   << setfill('0') << setw(2) << opcode << "\t"
+                   << reg << "\t" << addr << "\n";
+            
+        } else if (sscanf(ic_class.c_str(), "(DL,%d)", &dl_code) == 1) {
+            if (dl_code == 1) {
+                mc_out << lc << "\t" << "---" << "\n";
+            
+            } else if (sscanf(ic_class.c_str(), "(DL,%d)", &dl_code) == 1) {
+                if (dl_code == 1) {
+                    mc_out << lc << "\t" << "---" << "\n";
+            
+                } else if (dl_code == 2) {
+                    char const_val[20];
+                    if (sscanf(tokens[token_idx++].c_str(), "(C,%[^)])", const_val) == 1) {
+                        mc_out << lc << "\t " << "00\t0\t"
+                            << setfill('0') << setw(3) << const_val << "\n";
+                    }
+                }
+            }
+        }
+    }
+
+    ic_in.close();
+    mc_out.close();
+    cout << "Pass-II complete. Final output: machine_code.txt" << endl;
+    return 0;
+}

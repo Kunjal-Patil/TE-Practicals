@@ -1,0 +1,293 @@
+#include <iostream>
+#include <vector>
+#include <queue>
+#include <algorithm>
+#include <iomanip>
+
+using namespace std;
+
+// Structure to represent a process
+struct Process {
+    int pid;
+    int arrivalTime;
+    int burstTime;
+    int priority;
+
+    // For tracking and calculation
+    int remainingTime;
+    int startTime = -1;
+    int completionTime;
+    int turnaroundTime;
+    int waitingTime;
+    int responseTime;
+};
+
+// Function to print the results in a formatted table
+void printResults(const vector<Process>& processes, const string& algorithmName) {
+    float totalTAT = 0, totalWT = 0, totalRT = 0;
+    int n = processes.size();
+
+    cout << "\n--- " << algorithmName << " Results ---\n";
+
+    for (const auto& p : processes) {
+        // Output for each process
+        cout << "PID: " << p.pid 
+             << ", AT: " << p.arrivalTime
+             << ", BT: " << p.burstTime
+             << ", CT: " << p.completionTime
+             << ", TAT: " << p.turnaroundTime
+             << ", WT: " << p.waitingTime
+             << ", RT: " << p.responseTime << "\n";
+
+        // Accumulate totals
+        totalTAT += p.turnaroundTime;
+        totalWT += p.waitingTime;
+        totalRT += p.responseTime;
+    }
+    
+    // Calculate and print Averages
+    if (n > 0) {
+        cout << "\n--- Averages ---\n";
+        cout << "Avg TAT: " << totalTAT / n << "\n";
+        cout << "Avg WT: " << totalWT / n << "\n";
+        cout << "Avg RT: " << totalRT / n << "\n";
+    }
+}
+
+// Comparison function for sorting by arrival time
+bool compareArrival(const Process& a, const Process& b) {
+    return a.arrivalTime < b.arrivalTime;
+}
+
+// --- 1. First-Come, First-Served (FCFS) ---
+void fcfs(vector<Process> processes) {
+    sort(processes.begin(), processes.end(), compareArrival);
+
+    int currentTime = 0;
+    for (auto& p : processes) {
+        if (currentTime < p.arrivalTime) {
+            currentTime = p.arrivalTime;
+        }
+        p.startTime = currentTime;
+        p.completionTime = currentTime + p.burstTime;
+        p.turnaroundTime = p.completionTime - p.arrivalTime;
+        p.waitingTime = p.turnaroundTime - p.burstTime;
+        p.responseTime = p.startTime - p.arrivalTime;
+        currentTime = p.completionTime;
+    }
+    printResults(processes, "First-Come, First-Served (FCFS)");
+}
+
+
+// --- 2. Round Robin (RR) ---
+void roundRobin(vector<Process> processes, int quantum) {
+    queue<int> readyQueue;
+    vector<Process> completedProcesses;
+    int currentTime = 0;
+    int processIndex = 0;
+    int n = processes.size();
+
+    sort(processes.begin(), processes.end(), compareArrival);
+
+    while (completedProcesses.size() < n) {
+        // Add newly arrived processes to the ready queue
+        while (processIndex < n && processes[processIndex].arrivalTime <= currentTime) {
+            readyQueue.push(processIndex);
+            processIndex++;
+        }
+
+        if (readyQueue.empty()) {
+            if (processIndex < n) {
+                 currentTime = processes[processIndex].arrivalTime;
+            } else {
+                 break; // No more processes to arrive or in queue
+            }
+            continue;
+        }
+
+        int currentPID = readyQueue.front();
+        readyQueue.pop();
+        Process& p = processes[currentPID];
+
+        if (p.startTime == -1) {
+            p.startTime = currentTime;
+        }
+
+        int timeSlice = min(quantum, p.remainingTime);
+        currentTime += timeSlice;
+        p.remainingTime -= timeSlice;
+        
+        // Add processes that arrived during this time slice
+        while (processIndex < n && processes[processIndex].arrivalTime <= currentTime) {
+            readyQueue.push(processIndex);
+            processIndex++;
+        }
+
+        if (p.remainingTime > 0) {
+            readyQueue.push(currentPID);
+        } else {
+            p.completionTime = currentTime;
+            p.turnaroundTime = p.completionTime - p.arrivalTime;
+            p.waitingTime = p.turnaroundTime - p.burstTime;
+            p.responseTime = p.startTime - p.arrivalTime;
+            completedProcesses.push_back(p);
+        }
+    }
+    sort(completedProcesses.begin(), completedProcesses.end(), [](const Process& a, const Process& b){ return a.pid < b.pid; });
+    printResults(completedProcesses, "Round Robin (RR)");
+}
+
+
+// --- 3. Priority (Non-Preemptive) ---
+void priorityNonPreemptive(vector<Process> processes) {
+    vector<Process> completedProcesses;
+    int currentTime = 0;
+    int n = processes.size();
+    
+    while (completedProcesses.size() < n) {
+        int highestPriority = -1;
+        int selectedIndex = -1;
+        int nextArrivalIndex = 0; 
+        sort(processes.begin(), processes.end(), compareArrival);
+        
+        // Find the ready process with the highest priority (lowest number)
+        for (int i = 0; i < n; ++i) {
+            if (processes[i].arrivalTime <= currentTime && processes[i].remainingTime > 0) {
+                if (selectedIndex == -1 || processes[i].priority < highestPriority) {
+                    highestPriority = processes[i].priority;
+                    selectedIndex = i;
+                }
+            }
+        }
+        if (selectedIndex == -1) {
+            while(nextArrivalIndex < n && processes[nextArrivalIndex].remainingTime == 0) {
+                nextArrivalIndex++;
+            }
+            if (nextArrivalIndex < n) {
+                currentTime = processes[nextArrivalIndex].arrivalTime;
+            }
+            continue;
+        }
+
+        Process& p = processes[selectedIndex];
+        p.startTime = currentTime;
+        currentTime += p.burstTime;
+        p.completionTime = currentTime;
+        p.remainingTime = 0;
+        p.turnaroundTime = p.completionTime - p.arrivalTime;
+        p.waitingTime = p.turnaroundTime - p.burstTime;
+        p.responseTime = p.startTime - p.arrivalTime;
+        completedProcesses.push_back(p);
+    }
+    sort(completedProcesses.begin(), completedProcesses.end(), [](const Process& a, const Process& b){ return a.pid < b.pid; });
+    printResults(completedProcesses, "Priority (Non-Preemptive)");
+}
+
+
+// --- 4. Shortest Job First (Preemptive) / SRTF ---
+void sjfPreemptive(vector<Process> processes) {
+    vector<Process> completedProcesses;
+    int currentTime = 0;
+    int n = processes.size();
+
+    while (completedProcesses.size() < n) {
+        int shortestJobIndex = -1;
+        int shortestTime = INT_MAX;
+
+        // Find the ready process with the shortest remaining time
+        for (int i = 0; i < n; ++i) {
+            if (processes[i].arrivalTime <= currentTime && processes[i].remainingTime > 0) {
+                if (processes[i].remainingTime < shortestTime) {
+                    shortestTime = processes[i].remainingTime;
+                    shortestJobIndex = i;
+                }
+            }
+        }
+
+        if (shortestJobIndex == -1) {
+            // Find the next arrival time if CPU is idle
+            int nextArrival = INT_MAX;
+            for(const auto& p : processes) {
+                if(p.remainingTime > 0) {
+                    nextArrival = min(nextArrival, p.arrivalTime);
+                }
+            }
+            if(nextArrival != INT_MAX) currentTime = nextArrival;
+            continue;
+        }
+
+        Process& p = processes[shortestJobIndex];
+        if (p.startTime == -1) {
+            p.startTime = currentTime;
+        }
+
+        p.remainingTime--;
+        currentTime++;
+
+        if (p.remainingTime == 0) {
+            p.completionTime = currentTime;
+            p.turnaroundTime = p.completionTime - p.arrivalTime;
+            p.waitingTime = p.turnaroundTime - p.burstTime;
+            p.responseTime = p.startTime - p.arrivalTime;
+            completedProcesses.push_back(p);
+        }
+    }
+    sort(completedProcesses.begin(), completedProcesses.end(), [](const Process& a, const Process& b){ return a.pid < b.pid; });
+    printResults(completedProcesses, "Shortest Job First (Preemptive) / SRTF");
+}
+
+
+// --- Main Function ---
+int main() {
+    int n, choice, quantum;
+    cout << "Enter the number of processes: ";
+    cin >> n;
+
+    vector<Process> processes(n);
+    for (int i = 0; i < n; ++i) {
+        processes[i].pid = i + 1;
+        cout << "\nProcess " << processes[i].pid << endl;
+        cout << "  Enter Arrival Time: ";
+        cin >> processes[i].arrivalTime;
+        cout << "  Enter Burst Time: ";
+        cin >> processes[i].burstTime;
+        cout << "  Enter Priority: ";
+        cin >> processes[i].priority;
+        processes[i].remainingTime = processes[i].burstTime;
+    }
+
+    while (true) {
+        cout << "\n\n--- CPU Scheduling Algorithms ---" << endl;
+        cout << "1. First-Come, First-Served (FCFS)" << endl;
+        cout << "2. Round Robin (RR)" << endl;
+        cout << "3. Priority (Non-Preemptive)" << endl;
+        cout << "4. Shortest Job First (Preemptive) / SRTF" << endl;
+        cout << "5. Exit" << endl;
+        cout << "Enter your choice: ";
+        cin >> choice;
+
+        switch (choice) {
+            case 1:
+                fcfs(processes);
+                break;
+            case 2:
+                cout << "Enter Time Quantum for Round Robin: ";
+                cin >> quantum;
+                roundRobin(processes, quantum);
+                break;
+            case 3:
+                priorityNonPreemptive(processes);
+                break;
+            case 4:
+                sjfPreemptive(processes);
+                break;
+            case 5:
+                cout << "Exiting program." << endl;
+                return 0;
+            default:
+                cout << "Invalid choice. Please try again." << endl;
+        }
+    }
+
+    return 0;
+}

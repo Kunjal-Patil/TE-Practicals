@@ -1,0 +1,226 @@
+#include <iostream>
+#include <fstream>
+#include <string>
+#include <sstream>
+#include <vector>
+#include <map>
+#include <algorithm>
+#include <stdexcept>
+
+using namespace std;
+
+// --- Data Structures ---
+map<string, pair<string, int>> OPTAB;
+map<string, int> REGTAB;
+map<string, int> CCTAB;
+
+// Symbol Table: Symbol -> Address
+map<string, int> SYMTAB;
+// Literal Table: Literal -> Address
+map<string, int> LITTAB;
+// Literal Pool for LTORG
+vector<string> LITPOOL;
+
+// Vectors to maintain the order of symbols/literals for correct indexing
+vector<string> SYMBOL_ORDER;
+vector<string> LITERAL_ORDER;
+
+
+// --- Function to get the index of an item from its order vector ---
+int get_index(const vector<string>& vec, const string& value) {
+    auto it = find(vec.begin(), vec.end(), value);
+    if (it != vec.end()) {
+        return distance(vec.begin(), it);
+    }
+    return -1; // Should not happen if item is added before lookup
+}
+
+
+// --- Table Initialization ---
+void initializeTables() {
+    OPTAB = {
+        {"STOP", {"IS", 0}}, {"ADD", {"IS", 1}}, {"SUB", {"IS", 2}},
+        {"MULT", {"IS", 3}}, {"MOVER", {"IS", 4}}, {"MOVEM", {"IS", 5}},
+        {"COMP", {"IS", 6}}, {"BC", {"IS", 7}}, {"DIV", {"IS", 8}},
+        {"READ", {"IS", 9}}, {"PRINT", {"IS", 10}},
+        {"START", {"AD", 1}}, {"END", {"AD", 2}}, {"ORIGIN", {"AD", 3}},
+        {"EQU", {"AD", 4}}, {"LTORG", {"AD", 5}},
+        {"DS", {"DL", 1}}, {"DC", {"DL", 2}}
+    };
+    REGTAB = {{"AREG", 1}, {"BREG", 2}, {"CREG", 3}, {"DREG", 4}};
+    CCTAB = {{"LT", 1}, {"LE", 2}, {"EQ", 3}, {"GT", 4}, {"GE", 5}, {"ANY", 6}};
+}
+
+
+// --- Write output tables based on the ordered vectors ---
+void writeTablesToFile() {
+    ofstream sym_out("symtab.txt");
+    for (const string& sym : SYMBOL_ORDER) {
+        sym_out << sym << " " << SYMTAB[sym] << "\n";
+    }
+    sym_out.close();
+
+    ofstream lit_out("littab.txt");
+    for (const string& lit : LITERAL_ORDER) {
+        lit_out << lit << " " << LITTAB[lit] << "\n";
+    }
+    lit_out.close();
+}
+
+
+// --- Process literals for LTORG/END ---
+void processLiteralPool(int &locationCounter, ofstream &ic_out) {
+    for (string& lit : LITPOOL) {
+        LITTAB[lit] = locationCounter;
+        string const_val = lit.substr(2, lit.length() - 3);
+        ic_out << locationCounter << "\t(DL,2)\t(C," << const_val << ")\n";
+        locationCounter++;
+    }
+    LITPOOL.clear();
+}
+
+
+// --- Evaluate expressions like L1+3 ---
+int evaluateExpression(const string& expr) {
+    const size_t plus_pos = expr.find('+');
+    if (plus_pos == string::npos) {
+        return SYMTAB[expr]; 
+    }
+    string sym = expr.substr(0, plus_pos);
+    string offset_str = expr.substr(plus_pos + 1);
+    int symbol_address = SYMTAB[sym];
+    int offset = stoi(offset_str);
+    return symbol_address + offset;
+}
+
+
+// --- Main Pass-I Function ---
+int main() {
+    initializeTables();
+    ifstream input_file("source_code.txt");
+    ofstream ic_out("ic.txt");
+
+    string line;
+    int locationCounter = 0;
+
+    while (getline(input_file, line)) {
+        stringstream ss(line);
+        vector<string> tokens;
+        string token;
+        while (ss >> token) {
+            if (token.back() == ',') token.pop_back();
+            tokens.push_back(token);
+        }
+        if (tokens.empty()) continue;
+
+        string label, mnemonic, op1, op2;
+        int token_idx = 0;
+
+        // Check for Label
+        if (OPTAB.find(tokens[0]) == OPTAB.end()) {
+            label = tokens[0];
+            if (find(SYMBOL_ORDER.begin(), SYMBOL_ORDER.end(), label) == SYMBOL_ORDER.end()) {
+                SYMBOL_ORDER.push_back(label);
+            }
+            token_idx++;
+        }
+
+        mnemonic = tokens[token_idx++];
+        if (token_idx < tokens.size()) op1 = tokens[token_idx++];
+        if (token_idx < tokens.size()) op2 = tokens[token_idx++];
+        
+        if (!label.empty() && mnemonic != "EQU") {
+            SYMTAB[label] = locationCounter;
+        }
+
+        auto optab_entry = OPTAB.find(mnemonic);
+        string type = optab_entry->second.first;
+        int code = optab_entry->second.second;
+
+        // --- Handle Assembler Directives (AD) ---
+        if (mnemonic == "START") {
+            locationCounter = stoi(op1);
+            ic_out << "\t(AD,1)\t(C," << op1 << ")\n";
+            continue;
+        }
+        if (mnemonic == "END") {
+            processLiteralPool(locationCounter, ic_out);
+            ic_out << "\t(AD,2)\n";
+            break;
+        }
+        if (mnemonic == "LTORG") {
+            ic_out << "\t(AD,5)\n"; // Output LTORG directive
+            processLiteralPool(locationCounter, ic_out);
+            continue;
+        }
+        if (mnemonic == "ORIGIN") {
+            locationCounter = evaluateExpression(op1);
+            
+            // Assuming ORIGIN expression is always Symbol+Offset
+            size_t op_pos = op1.find('+');
+            if (op_pos == string::npos) op_pos = op1.find('-'); // Look for minus as well
+            
+            string base_sym = op1.substr(0, op_pos);
+            string offset = op1.substr(op_pos + 1);
+            
+            ic_out << "\t(AD,3)\t(S," << get_index(SYMBOL_ORDER, base_sym) << ")" << op1.substr(op_pos) << "\n";
+            continue;
+        }
+        if (mnemonic == "EQU") {
+            SYMTAB[label] = evaluateExpression(op1); // Use evaluateExpression for EQU
+            ic_out << "\t(AD,4)\t(S," << get_index(SYMBOL_ORDER, label) << ")\t(S," << get_index(SYMBOL_ORDER, op1) << ")\n";
+            continue;
+        }
+        
+        ic_out << locationCounter << "\t(" << type << "," << code << ")\t";
+        
+        if (type == "DL") {
+            if (mnemonic == "DC") {
+                // Extracts the constant value from the quotes, e.g., '6' -> 6
+                string const_val = op1.substr(1, op1.length() - 2); 
+                ic_out << "(C," << const_val << ")\n";
+                locationCounter++; // DC occupies one word
+            } else if (mnemonic == "DS") {
+                // For DS, op1 is the size/constant. We output (C,size) in the IC.
+                ic_out << "(C," << op1 << ")\n"; 
+                locationCounter += stoi(op1); // Advance LC by size
+            }
+            continue; // Skip the IS processing and general LC update below
+        }
+
+        if (!op1.empty()) {
+            if (REGTAB.count(op1)) ic_out << "(" << REGTAB.at(op1) << ")\t";
+            else if (CCTAB.count(op1)) ic_out << "(" << CCTAB.at(op1) << ")\t";
+        }
+        if (!op2.empty()) {
+            if (op2.front() == '=') { // Literal
+                // Logic for adding literal to order/pool/LITTAB
+                if (find(LITERAL_ORDER.begin(), LITERAL_ORDER.end(), op2) == LITERAL_ORDER.end()) {
+                    LITERAL_ORDER.push_back(op2);
+                    LITTAB[op2] = -1;
+                }
+                if (find(LITPOOL.begin(), LITPOOL.end(), op2) == LITPOOL.end()) {
+                    LITPOOL.push_back(op2);
+                }
+                ic_out << "(L," << get_index(LITERAL_ORDER, op2) << ")\n";
+            } else { // Symbol
+                // Logic for adding symbol to order/SYMTAB
+                if (find(SYMBOL_ORDER.begin(), SYMBOL_ORDER.end(), op2) == SYMBOL_ORDER.end()) {
+                    SYMBOL_ORDER.push_back(op2);
+                    SYMTAB[op2] = -1;
+                }
+                ic_out << "(S," << get_index(SYMBOL_ORDER, op2) << ")\n";
+            }
+        } else {
+            ic_out << "\n";
+        }
+
+        locationCounter++;
+    }
+
+    input_file.close();
+    ic_out.close();
+    writeTablesToFile();
+    cout << "✅ Pass-I complete. Files generated: ic.txt, symtab.txt, littab.txt" << endl;
+    return 0;
+}
