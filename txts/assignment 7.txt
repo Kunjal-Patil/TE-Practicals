@@ -1,73 +1,68 @@
-import tkinter as tk
-from tkinter import messagebox
+import streamlit as st
+import pandas as pd
+import os
 
-class Page(tk.Frame):
-    def _init_(self, parent, name):
-        super()._init_(parent, bg="#ecf0f1")
-        tk.Label(self, text=name, font=("Segoe UI", 18, "bold"), fg="#2d3436", bg="#ecf0f1").pack(pady=10)
+st.set_page_config(page_title="Student Dashboard", layout="wide")
 
-class App(tk.Tk):
-    def _init_(self):
-        super()._init_()
-        self.title("🎓 Student Info Portal")
-        self.geometry("480x340")
-        self.configure(bg="#ecf0f1")
+# --- Create/Load CSV file ---
+if not os.path.exists("data.csv"):
+    df = pd.DataFrame(columns=["Name", "Roll No", "Department", "Email"])
+    df.to_csv("data.csv", index=False)
 
-        container = tk.Frame(self, bg="#ecf0f1"); container.pack(fill="both", expand=True)
-        self.pages = {p: Page(container, p) for p in ("Home", "Form", "Summary")}
-        for p in self.pages.values(): p.grid(row=0, column=0, sticky="nsew")
+# --- Sidebar Navigation ---
+st.sidebar.title("📚 Student Dashboard")
+page = st.sidebar.radio("Navigate to", ["🏠 Home", "🧾 Student Form", "📊 Student Data"])
 
-        # HOME
-        tk.Label(self.pages["Home"], text="Welcome to the Student Info Portal", bg="#ecf0f1",
-                 fg="#0984e3", font=("Segoe UI", 12, "bold")).pack(pady=8)
-        tk.Label(self.pages["Home"], text="Click below to enter your details 👇", bg="#ecf0f1").pack()
+# --- HOME PAGE ---
+if page == "🏠 Home":
+    st.title("🎓 Welcome to Student Dashboard")
+    st.markdown("""
+    This simple web app is built using Streamlit to demonstrate:
+    - Multi-page navigation  
+    - User input handling  
+    - Data persistence using CSV  
+    - Table display and filters  
 
-        # FORM
-        f = tk.Frame(self.pages["Form"], bg="#ecf0f1"); f.pack(pady=10)
-        labels = ["Name", "Branch", "Roll No"]
-        self.entries = [tk.Entry(f, width=28, bg="white") for _ in labels]
-        for i, lbl in enumerate(labels):
-            tk.Label(f, text=f"{lbl}:", bg="#ecf0f1", font=("Segoe UI", 10)).grid(row=i, column=0, sticky="e", padx=5, pady=6)
-            self.entries[i].grid(row=i, column=1, pady=6)
+    Use the sidebar to navigate between pages.  
+    """)
 
-        tk.Button(self.pages["Form"], text="Submit ✅", bg="#74b9ff", fg="white", font=("Segoe UI", 10, "bold"),
-                  command=self.submit).pack(pady=12)
+# --- STUDENT FORM PAGE ---
+elif page == "🧾 Student Form":
+    st.title("🧾 Enter Student Details")
 
-        # SUMMARY
-        self.summary = tk.Label(self.pages["Summary"], bg="#ecf0f1", fg="#2d3436", font=("Segoe UI", 11))
-        self.summary.pack(pady=25)
+    with st.form("student_form", clear_on_submit=True):
+        name = st.text_input("Enter Full Name")
+        roll = st.text_input("Enter Roll No")
+        dept = st.selectbox("Select Department", ["Computer", "IT", "Mechanical", "Civil", "ENTC"])
+        email = st.text_input("Enter Email")
+        submit = st.form_submit_button("Submit Details")
 
-        # NAV BAR
-        nav = tk.Frame(self, bg="#0984e3"); nav.pack(fill="x", side="bottom")
-        for p in ("Home", "Form", "Summary"):
-            tk.Button(nav, text=p, bg="#74b9ff", fg="white", relief="flat",
-                      font=("Segoe UI", 9, "bold"), command=lambda p=p: self.show(p)
-                      ).pack(side="left", padx=8, pady=6)
+        if submit:
+            if name and roll and dept and email:
+                df = pd.read_csv("data.csv")
+                new_data = pd.DataFrame([[name, roll, dept, email]], columns=df.columns)
+                df = pd.concat([df, new_data], ignore_index=True)
+                df.to_csv("data.csv", index=False)
+                st.success(f"✅ Student record for {name} added successfully!")
+                st.balloons()
+            else:
+                st.warning("⚠ Please fill in all fields before submitting.")
 
-        self.show("Home")
+# --- STUDENT DATA PAGE ---
+elif page == "📊 Student Data":
+    st.title("📊 Student Records")
 
-    def show(self, p): self.pages[p].tkraise()
+    df = pd.read_csv("data.csv")
 
-    def submit(self):
-        name, branch, roll = [e.get().strip() for e in self.entries]
-        if not all([name, branch, roll]):
-            return messagebox.showwarning("Incomplete", "Please fill in all details.")
-        messagebox.showinfo("Success", f"Details submitted for {name} ✅")
-        self.summary.config(text=f"🎓 Student Details\n\nName: {name}\nBranch: {branch}\nRoll No: {roll}\n\n✔ Submitted Successfully!")
-        self.show("Summary")
+    if df.empty:
+        st.info("No student records found. Please add some from the Student Form page.")
+    else:
+        dept_filter = st.selectbox("Filter by Department", ["All"] + df["Department"].unique().tolist())
+        if dept_filter != "All":
+            df = df[df["Department"] == dept_filter]
+        st.dataframe(df, use_container_width=True)
+        if st.download_button("📥 Download Data as CSV", df.to_csv(index=False), "students.csv", "text/csv"):
+            st.snow()
 
-if _name_ == "_main_":
-    App().mainloop()
-
-
-"""
-python3 -m venv venv
-
-source ./venv/bin/activate
-
-python3-pip install streamlit pandas tkinter
-
-streamlit run <filename>.py
-
-
-"""
+        st.markdown("### Summary Statistics")
+        st.write(f"Total Students: {len(df)}")
