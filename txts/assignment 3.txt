@@ -8,25 +8,19 @@
 
 using namespace std;
 
-// A structure to hold all information about a defined macro.
-// This represents an entry in the Macro Name Table (MNT).
+// Structure for an MNT entry
 struct MacroDefinition {
     string name;
     int mdt_start_index;
     int parameter_count = 0;
-    // PNTAB: Maps parameter name (e.g., "&O") to its positional index (e.g., 1)
-    map<string, int> pntab;
-    // Stores default values for parameters
+    map<string, int> pntab; // Parameter Name Table
     map<string, string> default_params;
 };
 
 // --- Global Data Structures ---
-// Macro Name Table (MNT): Maps a macro's name to its full definition details.
 map<string, MacroDefinition> MNT;
-// Macro Definition Table (MDT): Stores the body of all macros sequentially.
 vector<string> MDT;
 
-// Helper function to split a string by a delimiter, used for parsing arguments.
 vector<string> split(const string& s, char delimiter) {
     vector<string> tokens;
     string token;
@@ -37,7 +31,6 @@ vector<string> split(const string& s, char delimiter) {
     return tokens;
 }
 
-// Function to write the final MNT and MDT to their respective files.
 void writeTablesToFile() {
     ofstream mnt_out("mnt.txt");
     mnt_out << "#Name\t#Params\tMDT_Index\n";
@@ -67,7 +60,6 @@ int main() {
     bool isDefiningMacro = false;
     MacroDefinition currentMacro;
 
-    // Main loop to process the input file line by line
     while (getline(inputFile, line)) {
         stringstream ss(line);
         vector<string> tokens;
@@ -78,19 +70,17 @@ int main() {
         // --- 1. Handle Macro Definition ---
         if (tokens[0] == "MACRO") {
             isDefiningMacro = true;
-            // The next line is the macro prototype
-            getline(inputFile, line);
+            getline(inputFile, line); // Get prototype line
             stringstream proto_ss(line);
             vector<string> proto_tokens;
             while(proto_ss >> token) proto_tokens.push_back(token);
 
-            // Initialize a new MacroDefinition object
             currentMacro = MacroDefinition();
             currentMacro.name = proto_tokens[0];
             currentMacro.mdt_start_index = MDT.size();
-            MDT.push_back(line); // Store the raw prototype in the MDT
+            MDT.push_back(line); // Store raw prototype
 
-            // Process parameters from the prototype
+            // Process parameters
             for (size_t i = 1; i < proto_tokens.size(); ++i) {
                 currentMacro.parameter_count++;
                 string param = proto_tokens[i];
@@ -98,7 +88,7 @@ int main() {
 
                 size_t equals_pos = param.find('=');
                 string param_name = param;
-                if (equals_pos != string::npos) { // Parameter has a default value
+                if (equals_pos != string::npos) { // Has default value
                     param_name = param.substr(0, equals_pos);
                     string default_val = param.substr(equals_pos + 1);
                     currentMacro.default_params[param_name] = default_val;
@@ -110,14 +100,14 @@ int main() {
 
         if (tokens[0] == "MEND") {
             isDefiningMacro = false;
-            MDT.push_back(line); // Store the MEND line
-            MNT[currentMacro.name] = currentMacro; // Save the completed macro to the MNT
+            MDT.push_back(line); // Store MEND
+            MNT[currentMacro.name] = currentMacro; // Save to MNT
             continue;
         }
 
         if (isDefiningMacro) {
-            // Replace formal parameters with positional placeholders (e.g., &O -> ?1)
-            string processed_line = tokens[0]; // The opcode
+            // Replace formal params with positional placeholders (e.g., &O -> ?1)
+            string processed_line = tokens[0]; // Opcode
             for (size_t i = 1; i < tokens.size(); ++i) {
                 string arg = tokens[i];
                 if (arg.back() == ',') arg.pop_back();
@@ -129,74 +119,18 @@ int main() {
                 }
                 if (tokens[i].back() == ',') processed_line += ",";
             }
-            MDT.push_back(processed_line); // Store processed line in MDT
+            MDT.push_back(processed_line); // Store processed line
             continue;
         }
-
-        // --- 2. Handle Macro Expansion ---
-        if (MNT.count(tokens[0])) {
-            cout << "Expanding macro call: " << line << endl;
-            MacroDefinition& macro = MNT[tokens[0]];
-
-            // Build Argument List Array (ALA) mapping position to actual argument
-            map<int, string> ala;
-            if (tokens.size() > 1) {
-                vector<string> actual_params = split(tokens[1], ',');
-                for(size_t i = 0; i < actual_params.size(); ++i) {
-                    ala[i + 1] = actual_params[i];
-                }
-            }
-
-            // Fill in default parameters if they were not provided in the call
-            for(const auto& pair : macro.pntab) {
-                if (ala.find(pair.second) == ala.end()) { // If parameter is missing
-                    ala[pair.second] = macro.default_params[pair.first];
-                }
-            }
-
-            // Expand the macro body using the ALA
-            for (int i = macro.mdt_start_index + 1; ; ++i) {
-                string mdt_line = MDT[i];
-                if (mdt_line == "MEND") break;
-
-                stringstream mdt_ss(mdt_line);
-                vector<string> mdt_tokens;
-                string mdt_token;
-                while(mdt_ss >> mdt_token) mdt_tokens.push_back(mdt_token);
-
-                string expanded_line = mdt_tokens[0]; // Start with opcode
-                for (size_t j = 1; j < mdt_tokens.size(); ++j) {
-                    string arg_token = mdt_tokens[j];
-                    bool has_comma = false;
-                    if (arg_token.back() == ',') {
-                        has_comma = true;
-                        arg_token.pop_back();
-                    }
-
-                    if (arg_token[0] == '?') { // It's a parameter placeholder
-                        int param_index = stoi(arg_token.substr(1));
-                        expanded_line += " " + ala[param_index];
-                    } else {
-                        expanded_line += " " + arg_token;
-                    }
-                     if (has_comma) expanded_line += ",";
-                }
-                outputFile << expanded_line << endl;
-            }
-            continue;
-        }
-
-        // --- 3. Handle Regular Assembly Lines ---
         outputFile << line << endl;
     }
 
     inputFile.close();
     outputFile.close();
 
-    // Write the final MNT and MDT data structures to files
     writeTablesToFile();
     cout << "\n Pass-I of macro-processor complete." << endl;
-    cout << "   - Expanded code written to expanded_code.txt" << endl;
+    cout << "   - Intermediate code (with macro calls) written to expanded_code.txt" << endl;
     cout << "   - Macro Name Table written to mnt.txt" << endl;
     cout << "   - Macro Definition Table written to mdt.txt" << endl;
 
