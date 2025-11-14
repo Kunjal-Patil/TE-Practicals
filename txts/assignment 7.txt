@@ -65,4 +65,8 @@ elif page == "📊 Student Data":
             st.snow()
 
         st.markdown("### Summary Statistics")
+
         st.write(f"Total Students: {len(df)}")
+pip install streamlit
+python3 -m venv venv
+source venv/bin/activate
